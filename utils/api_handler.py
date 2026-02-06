@@ -20,5 +20,5 @@ def fetch_posts(limit=10, retries=3, delay=1):
                 time.sleep(delay)
             else:
                 print("\nNetwork request failed. Returning MOCK data.")
-                # رجع بيانات وهمية عشان المشروع يشتغل
+                # Return mock data to ensure project continuity
                 return [{"id": i+1, "title": f"Mock Title {i+1}", "body": f"Mock Body {i+1}"} for i in range(limit)]

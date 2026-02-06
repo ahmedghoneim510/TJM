@@ -6,7 +6,7 @@ import time
 if __name__ == "__main__":
     posts = fetch_posts(limit=10)
     if not posts:
-        print("لم يتم جلب بيانات.")
+        print("No data fetched.")
         exit()
     
     print(f"Starting automation for {len(posts)} posts...")
