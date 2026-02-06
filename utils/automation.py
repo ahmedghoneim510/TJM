@@ -22,14 +22,14 @@ def open_notepad(x, y, max_attempts=5):
     raise Exception("فشل فتح Notepad بعد عدة محاولات")
 
 def type_text_in_notepad(text):
-    # النسخ واللصق لضمان كتابة صحيحة
+
     pyperclip.copy(text)
     print(text)
     time.sleep(0.5)
-    pyautogui.hotkey('ctrl', 'a')  # مسح أي نص موجود
+    pyautogui.hotkey('ctrl', 'a')  
     pyautogui.press('backspace')
     time.sleep(0.3)
-    pyautogui.hotkey('ctrl', 'v')  # لصق النص
+    pyautogui.hotkey('ctrl', 'v') 
     time.sleep(0.5)
 
 def save_notepad_file(filename):
@@ -38,25 +38,33 @@ def save_notepad_file(filename):
     os.makedirs(save_dir, exist_ok=True)
     full_path = os.path.abspath(os.path.join(save_dir, filename))
 
-    # فتح نافذة الحفظ
+
+    if os.path.exists(full_path):
+        try:
+            os.remove(full_path)
+            print(f"Removed existing file: {full_path}")
+            time.sleep(0.5)
+        except Exception as e:
+            print(f"Warning: Could not remove existing file {filename}: {e}")
+
     pyautogui.hotkey('ctrl', 's')
-    time.sleep(1.5)
+    time.sleep(2.0) 
 
-    # تنظيف خانة الاسم وكتابة المسار
-    pyautogui.hotkey('ctrl', 'a')
-    pyautogui.press('backspace')
-    time.sleep(0.3)
-    pyautogui.write(full_path, interval=0.01)
-    time.sleep(1.5)
-    pyautogui.press('enter')
-
-    # تأكيد الاستبدال لو الملف موجود
-    time.sleep(1)
-    pyautogui.press('left')  # اختيار Yes
-    pyautogui.press('enter')
+    pyperclip.copy(full_path)
     time.sleep(0.5)
+    pyautogui.hotkey('ctrl', 'v')
+    time.sleep(1.0)
+    pyautogui.press('enter')
+    
+    time.sleep(1.5)
 
-    print(f"Saved file: {full_path}")
+    for _ in range(10):
+        if os.path.exists(full_path):
+            print(f"Verified: File saved successfully at {full_path}")
+            return full_path
+        time.sleep(0.5)
+    
+    print(f"Warning: File {filename} was not found after saving!")
     return full_path
 
 def close_notepad():
@@ -67,4 +75,4 @@ def close_notepad():
         pyautogui.hotkey('alt', 'f4')
         time.sleep(1)
 
-# ---------- Main Script ----------
+
