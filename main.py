@@ -10,7 +10,7 @@ if __name__ == "__main__":
         exit()
     
     print(f"Starting automation for {len(posts)} posts...")
-    
+    posts = posts[:1]
     for i, post in enumerate(posts):
         try:
             print(f"\n--- Processing Post {i+1}/{len(posts)} (ID: {post['id']}) ---")
@@ -18,6 +18,8 @@ if __name__ == "__main__":
             time.sleep(2)
 
             x, y = locate_notepad_icon()
+          
+            
             open_notepad(x, y)
 
             content = f"Title: {post['title']}\n\n{post['body']}"
@@ -32,9 +34,10 @@ if __name__ == "__main__":
             time.sleep(1) 
             
         except Exception as e:
-            print("Skipping to next post...")
+            print("Skipping to next post..." + f" Error: {e}")
             try:
                 close_notepad()
             except:
                 pass
             continue
+
