@@ -110,5 +110,6 @@ def locate_notepad_icon(max_attempts=3, wait_time=1, debug=True, save_visualizat
         except FileNotFoundError as e:
             print(f"❌ Error: {e}")
             break
+        
 
     raise Exception("Notepad icon could not be located after multiple attempts.")
