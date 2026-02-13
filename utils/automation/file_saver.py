@@ -42,7 +42,7 @@ def save_notepad_file(filename):
 
     # Open Save As dialog
     pyautogui.hotkey("ctrl", "shift", "s")
-    time.sleep(3)
+    time.sleep(1)
 
     # Paste the full path into the filename field
     pyperclip.copy(full_path)

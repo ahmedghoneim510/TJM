@@ -76,7 +76,10 @@ def visualize_grounding(
     # Save visualization
     if output_path is None:
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = f"output/grounding_viz_{timestamp}.png"
+        # Get project root (2 levels up from this file)
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        output_dir = os.path.join(project_root, "output")
+        output_path = os.path.join(output_dir, f"grounding_viz_{timestamp}.png")
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     cv2.imwrite(output_path, result)

@@ -12,7 +12,10 @@
 # 1. Test the grounding system
 python test_grounding.py
 
-# 2. Run the automation
+# 2. Run icon detection demo (generates annotated screenshots)
+python demo_icon_detection.py
+
+# 3. Run the automation
 python main.py
 ```
 
@@ -24,6 +27,7 @@ python main.py
 
 | File                                                         | Purpose                          | Read Time |
 | ------------------------------------------------------------ | -------------------------------- | --------- |
+| [**ICON_DETECTION_DEMO.md**](ICON_DETECTION_DEMO.md)         | ⭐ Icon detection demo guide     | 7 min ⭐  |
 | [**SETUP_SUMMARY.md**](SETUP_SUMMARY.md)                     | ⭐ What was added & next steps   | 3 min ⭐  |
 | [**NEXT_STEPS.md**](NEXT_STEPS.md)                           | ⭐ Detailed setup instructions   | 5 min ⭐  |
 | [**PROJECT_STATUS.md**](PROJECT_STATUS.md)                   | Current status & checklist       | 3 min     |
@@ -32,9 +36,7 @@ python main.py
 | [**UV_SETUP.md**](UV_SETUP.md)                               | UV configuration guide           | 5 min     |
 | [**GROUNDING_DOCUMENTATION.md**](GROUNDING_DOCUMENTATION.md) | Complete technical reference     | 30 min    |
 
-| [\**IMPLEMENTATION_COMPLETE.md*ETUP_SUMMARY → NEXT_STEPS → QUICK_START → IMPLEMENTATION_SUMMARY → (optional) others
-
-**Recommended reading order:** STATUS → QUICK_START → SUMMARY → (optional) UV_SETUP → (optional) COMPLETE → (optional) DOCUMENTATION
+**Recommended reading order:** ICON_DETECTION_DEMO → QUICK_START → SETUP_SUMMARY → NEXT_STEPS → (optional) others
 
 ---
 

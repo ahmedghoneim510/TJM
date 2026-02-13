@@ -1,9 +1,6 @@
-"""Stage 2: Verify candidates and select the best match."""
-
 import re
 import json
 from typing import List, Optional
-
 import cv2
 import PIL.Image
 from google import genai
