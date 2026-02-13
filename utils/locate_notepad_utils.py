@@ -8,7 +8,9 @@ from utils.ai_vision_detector import (
 from utils.icon_detection import find_icon_by_template, IconNotFoundError
 from time import sleep
 import os
+from dotenv import load_dotenv
 
+load_dotenv()
 
 def locate_notepad_icon(max_attempts=3, wait_time=1, debug=True, save_visualization=False, use_fallback=True):
     """
@@ -27,7 +29,9 @@ def locate_notepad_icon(max_attempts=3, wait_time=1, debug=True, save_visualizat
     Raises: 
         Exception if not found after retries
     """
-    api_key = "AIzaSyDKW_eUhMmu-4fkBF8JquhL7-J3a2Isnqk"
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY not found in .env file")
     
     for attempt in range(1, max_attempts + 1):
         screenshot_path = None

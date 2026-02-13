@@ -11,6 +11,128 @@ import numpy as np
 from typing import List, Dict, Tuple, Optional
 import time
 from io import BytesIO
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+def extract_candidates_via_regex(text: str, debug: bool = False) -> dict:
+    """
+    Last-resort fallback: extract candidate objects from broken/truncated JSON 
+    using regex to find individual {x, y, w, h} patterns.
+    Works even when JSON is completely malformed.
+    """
+    # Find all objects that have at least x, y, w, h numeric values
+    # Matches patterns like: "x": 124, "y": 662, "w": 48, "h": 68
+    pattern = r'"x"\s*:\s*(\d+)\s*,\s*"y"\s*:\s*(\d+)\s*,\s*"w"\s*:\s*(\d+)\s*,\s*"h"\s*:\s*(\d+)'
+    matches = re.findall(pattern, text)
+    
+    if not matches:
+        # Try alternate field order
+        pattern2 = r'"x"\s*:\s*(\d+).*?"y"\s*:\s*(\d+).*?"w"\s*:\s*(\d+).*?"h"\s*:\s*(\d+)'
+        matches = re.findall(pattern2, text, re.DOTALL)
+    
+    if matches:
+        candidates = []
+        for m in matches:
+            candidates.append({
+                "x": int(m[0]), "y": int(m[1]),
+                "w": int(m[2]), "h": int(m[3]),
+                "c": 0.85  # Default confidence for regex-extracted candidates
+            })
+        
+        # Try to extract confidence for each match
+        conf_pattern = r'"(?:c|confidence)"\s*:\s*(0?\.\d+|1(?:\.0)?)'
+        conf_matches = re.findall(conf_pattern, text)
+        for i, conf in enumerate(conf_matches):
+            if i < len(candidates):
+                candidates[i]["c"] = float(conf)
+        
+        if debug:
+            print(f"✓ Regex extraction found {len(candidates)} candidates from broken JSON")
+        
+        return {"found": True, "candidates": candidates}
+    
+    return {"found": False, "candidates": []}
+
+
+def repair_truncated_json(text: str, debug: bool = False) -> str:
+    """
+    Attempt to repair truncated JSON responses from AI.
+    Handles cases where JSON is cut off mid-way, including unterminated strings.
+    """
+    # First, try to extract JSON block from markdown code fence
+    json_block_match = re.search(r'```json\s*([\s\S]*?)```', text)
+    if json_block_match:
+        text = json_block_match.group(1).strip()
+    else:
+        # Also match unclosed code fence (truncated response)
+        json_block_match = re.search(r'```json\s*([\s\S]*)', text)
+        if json_block_match:
+            text = json_block_match.group(1).strip()
+        else:
+            # Try to find just the JSON object
+            start = text.find('{')
+            if start != -1:
+                text = text[start:]
+    
+    # Remove trailing incomplete elements
+    text = re.sub(r',\s*\.\.\.', '', text)  # Remove ", ..."
+    text = re.sub(r'\.\.\.\s*$', '', text)  # Remove trailing "..."
+    
+    # Try parsing as-is first
+    try:
+        json.loads(text)
+        return text
+    except json.JSONDecodeError:
+        pass
+    
+    # Handle unterminated strings by finding and removing incomplete trailing content
+    # Remove the last incomplete key-value pair line(s) progressively
+    lines = text.split('\n')
+    for _ in range(min(5, len(lines))):  # Try removing up to 5 trailing lines
+        # Remove trailing line
+        removed_line = lines.pop().strip()
+        text_attempt = '\n'.join(lines).rstrip().rstrip(',')
+        
+        # Count brackets and braces
+        open_braces = text_attempt.count('{') - text_attempt.count('}')
+        open_brackets = text_attempt.count('[') - text_attempt.count(']')
+        
+        # Add missing closers
+        fixed = text_attempt + ']' * open_brackets + '}' * open_braces
+        
+        try:
+            json.loads(fixed)
+            if debug:
+                print(f"✓ JSON repaired by removing {_ + 1} trailing line(s)")
+            return fixed
+        except json.JSONDecodeError:
+            continue
+    
+    # If line-by-line removal didn't work, try aggressive regex cleanup on original  
+    text_clean = text
+    # Remove incomplete key-value pairs at end
+    text_clean = re.sub(r',\s*"[^"]*$', '', text_clean)  # '"key (no closing quote)
+    text_clean = re.sub(r',\s*"[^"]*"\s*:\s*"[^"]*$', '', text_clean)  # "key": "val (no closing quote)
+    text_clean = re.sub(r',\s*"[^"]*"\s*:\s*"?[^"{}\[\],]*$', '', text_clean)
+    text_clean = re.sub(r',\s*"[^"]*"\s*:\s*$', '', text_clean)
+    text_clean = re.sub(r',\s*\{[^}]*$', '', text_clean)  # Remove incomplete object
+    text_clean = re.sub(r',\s*$', '', text_clean.rstrip())
+    
+    open_braces = text_clean.count('{') - text_clean.count('}')
+    open_brackets = text_clean.count('[') - text_clean.count(']')
+    text_clean += ']' * open_brackets + '}' * open_braces
+    
+    try:
+        json.loads(text_clean)
+        if debug:
+            print(f"✓ JSON repaired via regex cleanup")
+        return text_clean
+    except json.JSONDecodeError as e:
+        if debug:
+            print(f"⚠️ JSON repair failed: {e}")
+        raise
 
 
 class GroundingCandidate:
@@ -75,41 +197,16 @@ def generate_proposals(screenshot_path: str, api_key: str, debug: bool = False) 
     if debug and img.size != original_size:
         print(f"📦 Image compressed: {original_size} → {img.size}")
     
-    # Stage 1 Prompt: Request bounding box proposals only
-    proposal_prompt = f"""You are a visual grounding AI specialized in detecting UI elements.
+    # Stage 1 Prompt: Ultra-compact, explicit about PIXEL coordinates
+    proposal_prompt = f"""Look at this {img.size[0]}x{img.size[1]} pixel screenshot. Find the Windows Notepad icon.
 
-Task: Identify ALL potential regions that could contain the standard Windows Notepad icon in this desktop screenshot (original size: {original_size[0]}x{original_size[1]}).
+Return PIXEL coordinates (not normalized). x,y = top-left corner in pixels. w,h = size in pixels.
+For example, on a {img.size[0]}x{img.size[1]} image, x ranges 0-{img.size[0]}, y ranges 0-{img.size[1]}.
 
-DETECTION RULES:
-✓ INCLUDE:
-  - Standard Windows Notepad icon (simple notepad/paper icon, often white/blue)
-  - Desktop shortcuts with "Notepad" text label
-  - Taskbar buttons (bottom bar, usually 40-50px tall)
-  - Quick access icons
-  - All icon sizes: 32x32, 48x48, 64x64, 96x96, 128x128 pixels
+Output ONLY one line of JSON:
+{{"found":true,"candidates":[{{"x":100,"y":500,"w":64,"h":64,"c":0.9}}]}}
 
-✗ EXCLUDE:
-  - Notepad++ (has green/rainbow icon)
-  - Other text editors
-  - Background wallpaper elements
-  - Blue empty space with no icons
-
-IMPORTANT: 
-- Look carefully at the ENTIRE image including desktop area and taskbar
-- If you see ANY icon that looks like a notepad/paper/document, include it
-- Only return coordinates that actually contain an icon, NOT empty blue areas
-- Return bounding boxes large enough to capture the full icon + text label
-
-Output JSON format (adjust x,y,w,h if image was resized to {img.size[0]}x{img.size[1]}):
-{{
-  "found": true/false,
-  "candidates": [
-    {{"x": 100, "y": 200, "w": 80, "h": 96, "confidence": 0.92, "location": "desktop"}},
-    {{"x": 850, "y": 1030, "w": 48, "h": 48, "confidence": 0.78, "location": "taskbar"}}
-  ]
-}}
-
-Return 1-5 candidates ranked by confidence. If NO Notepad icon visible, return empty candidates array."""
+No markdown. No explanation. No extra fields."""
 
     # Retry logic for network errors
     max_retries = 3
@@ -151,36 +248,80 @@ Return 1-5 candidates ranked by confidence. If NO Notepad icon visible, return e
             print(f"\n=== Stage 1: Proposal Generation ===")
             print(f"Raw AI Response:\n{full_text[:500]}...\n" if len(full_text) > 500 else f"Raw AI Response:\n{full_text}\n")
 
-        # Extract JSON
-        json_match = re.search(r'\{.*\}', full_text, re.DOTALL)
-        if json_match:
-            result = json.loads(json_match.group())
-        else:
-            result = json.loads(full_text)
+        result = None
+        
+        # Strategy 1: Try repair_truncated_json
+        try:
+            repaired_json = repair_truncated_json(full_text, debug=debug)
+            result = json.loads(repaired_json)
+        except Exception:
+            pass
+        
+        # Strategy 2: Greedy regex for outermost JSON object
+        if result is None:
+            try:
+                json_match = re.search(r'\{.*\}', full_text, re.DOTALL)
+                if json_match:
+                    result = json.loads(json_match.group())
+            except json.JSONDecodeError:
+                pass
+        
+        # Strategy 3: Extract candidates via regex from broken JSON (last resort)
+        if result is None:
+            if debug:
+                print("🔧 Using regex extraction fallback on broken JSON...")
+            result = extract_candidates_via_regex(full_text, debug=debug)
+            if not result.get("candidates"):
+                raise Exception(f"Could not extract any candidates from AI response")
 
-        if not result.get("found") or not result.get("candidates"):
+        if not result.get("found", True) and not result.get("candidates"):
             if debug:
                 print("⚠️ No candidates found in Stage 1")
-                print("💡 Possible reasons:")
-                print("   - Notepad icon not visible on desktop or taskbar")
-                print("   - Icon too small or obscured")
-                print("   - Try adding Notepad shortcut to desktop")
             return []
 
         # Convert to GroundingCandidate objects
         candidates = []
         for c in result["candidates"]:
+            raw_x, raw_y = int(c["x"]), int(c["y"])
+            raw_w, raw_h = int(c["w"]), int(c["h"])
+            
+            # Detect if coordinates are in normalized 0-1000 range (Gemini default)
+            # Heuristic: if all coords suggest they're in 0-1000 range relative to image size
+            img_w, img_h = img.size
+            max_coord = max(raw_x + raw_w, raw_y + raw_h)
+            likely_normalized = (
+                max_coord <= 1000 and 
+                img_w > 1000 and
+                (raw_x + raw_w) <= 1000 and 
+                (raw_y + raw_h) <= 1000
+            )
+            
+            if likely_normalized:
+                # Convert from 0-1000 normalized to actual pixels
+                px_x = int(raw_x * img_w / 1000)
+                px_y = int(raw_y * img_h / 1000)
+                px_w = int(raw_w * img_w / 1000)
+                px_h = int(raw_h * img_h / 1000)
+                if debug:
+                    print(f"  📐 Normalized coords detected: ({raw_x},{raw_y}) → pixel ({px_x},{px_y})")
+            else:
+                # Already pixel coordinates
+                px_x, px_y, px_w, px_h = raw_x, raw_y, raw_w, raw_h
+            
             # Scale coordinates back to original size if image was resized
-            scale_x = original_size[0] / img.size[0]
-            scale_y = original_size[1] / img.size[1]
+            scale_x = original_size[0] / img_w
+            scale_y = original_size[1] / img_h
+            
+            # Support both "confidence" and "c" field names
+            conf = c.get("confidence", c.get("c", 0.5))
             
             candidate = GroundingCandidate(
-                x=int(c["x"] * scale_x),
-                y=int(c["y"] * scale_y),
-                w=int(c["w"] * scale_x),
-                h=int(c["h"] * scale_y),
-                confidence=float(c["confidence"]),
-                source=c.get("location", "unknown")
+                x=int(px_x * scale_x),
+                y=int(px_y * scale_y),
+                w=int(px_w * scale_x),
+                h=int(px_h * scale_y),
+                confidence=float(conf),
+                source=c.get("location", "ai")
             )
             candidates.append(candidate)
         
@@ -191,23 +332,41 @@ Return 1-5 candidates ranked by confidence. If NO Notepad icon visible, return e
         
         return candidates
 
-    except json.JSONDecodeError as e:
-        if debug:
-            print(f"❌ JSON parsing error: {e}")
-            print(f"   Response text: {full_text[:200]}...")
-        raise Exception(f"Failed to parse AI response: {e}")
     except Exception as e:
+        error_msg = str(e)
+        if debug:
+            print(f"❌ Parsing error: {error_msg}")
+            try:
+                print(f"   Response (first 300): {full_text[:300]}")
+            except:
+                pass
+        
         # Fallback to older model for 404 errors
-        if "404" in str(e) or "not found" in str(e).lower():
+        if "404" in error_msg or "not found" in error_msg.lower():
             if debug:
                 print("🔄 Falling back to gemini-1.5-flash...")
-            response = client.models.generate_content(
-                model='gemini-1.5-flash',
-                contents=[proposal_prompt, img]
-            )
-            result = json.loads(re.search(r'\{.*\}', response.text, re.DOTALL).group())
-            return [GroundingCandidate(int(c["x"]), int(c["y"]), int(c["w"]), int(c["h"]), float(c["confidence"])) 
-                    for c in result.get("candidates", [])]
+            try:
+                response = client.models.generate_content(
+                    model='gemini-1.5-flash',
+                    contents=[proposal_prompt, img]
+                )
+                fallback_text = response.text
+                result = None
+                try:
+                    repaired_json = repair_truncated_json(fallback_text, debug=debug)
+                    result = json.loads(repaired_json)
+                except:
+                    pass
+                if result is None:
+                    result = extract_candidates_via_regex(fallback_text, debug=debug)
+                
+                return [GroundingCandidate(int(c["x"]), int(c["y"]), int(c["w"]), int(c["h"]), 
+                        float(c.get("confidence", c.get("c", 0.5)))) 
+                        for c in result.get("candidates", [])]
+            except Exception as fallback_err:
+                if debug:
+                    print(f"   Fallback also failed: {fallback_err}")
+        
         raise Exception(f"Proposal generation failed: {e}")
 
 
@@ -277,11 +436,16 @@ Respond with JSON only:
                 )
             )
             
-            json_match = re.search(r'\{.*\}', response.text, re.DOTALL)
-            if json_match:
-                verify_result = json.loads(json_match.group())
-            else:
-                verify_result = json.loads(response.text)
+            # Use repair function for truncated responses
+            try:
+                repaired_json = repair_truncated_json(response.text, debug=False)
+                verify_result = json.loads(repaired_json)
+            except:
+                json_match = re.search(r'\{.*\}', response.text, re.DOTALL)
+                if json_match:
+                    verify_result = json.loads(json_match.group())
+                else:
+                    verify_result = json.loads(response.text)
             
             if verify_result.get("is_notepad"):
                 # Combine original and verification confidence
@@ -332,7 +496,9 @@ def detect_notepad_with_ai(screenshot_path: str, debug: bool = True) -> tuple:
     Returns: (x, y) center coordinates for clicking
     Raises: ValueError if icon not found
     """
-    api_key = "AIzaSyDKW_eUhMmu-4fkBF8JquhL7-J3a2Isnqk"
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY not found in .env file")
     
     if debug:
         print("\n" + "="*60)
@@ -367,8 +533,27 @@ def detect_notepad_with_ai(screenshot_path: str, debug: bool = True) -> tuple:
         if debug:
             print("\n" + "="*60)
             print(f"✓ GROUNDING COMPLETE: Click at ({x}, {y})")
+            print(f"  BBox: top-left=({best_candidate.x},{best_candidate.y}), size=({best_candidate.w}x{best_candidate.h})")
             print(f"  Confidence: {best_candidate.confidence:.2f}")
             print(f"  Source: {best_candidate.source}")
+            
+            # Save a quick debug marker on screenshot
+            try:
+                debug_img = cv2.imread(screenshot_path)
+                if debug_img is not None:
+                    # Draw crosshair at click point
+                    cv2.drawMarker(debug_img, (x, y), (0, 0, 255), cv2.MARKER_CROSS, 40, 3)
+                    # Draw bounding box
+                    cv2.rectangle(debug_img, 
+                        (best_candidate.x, best_candidate.y),
+                        (best_candidate.x + best_candidate.w, best_candidate.y + best_candidate.h),
+                        (0, 255, 0), 2)
+                    debug_path = screenshot_path.replace('.png', '_debug_click.png')
+                    cv2.imwrite(debug_path, debug_img)
+                    print(f"  📸 Debug click preview saved: {debug_path}")
+            except Exception:
+                pass
+            
             print("="*60 + "\n")
         
         return x, y
