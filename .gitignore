@@ -2,3 +2,9 @@ venv/
 .venv/
 env/
 .env/
+
+# Environment variables (sensitive data)
+.env
+
+# Documentation (exclude markdown files)
+*.md
