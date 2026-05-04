@@ -8,3 +8,9 @@ env/
 
 # Documentation (exclude markdown files)
 *.md
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
